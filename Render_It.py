@@ -44,6 +44,8 @@ V0.07: Individual clips tick, applied on every run, because a preset does
 V0.08: a preset set to Source name keeps its source file names, the
        script only names files for presets with a custom name. Presets
        are reloaded for real, so a name from an earlier run cannot stick.
+V0.09: on the Color page, Selected clips means the highlighted clips only,
+       the current clip is left out.
 
 Things this build deliberately does not do:
   It starts rendering only when the Start tick is on, and never when a
@@ -63,7 +65,7 @@ import tempfile
 
 # ---------------------------------------------------------------- settings
 
-VERSION = "0.08"
+VERSION = "0.09"
 
 PRESET_PREFIX = ""        # optional extra filter, e.g. "SL_". Empty = off.
 
@@ -616,7 +618,7 @@ def clips_in_range(timeline, mark_in, mark_out):
     return hits
 
 
-def build_jobs(timeline, scope, per_clip, reel_cfg=None):
+def build_jobs(timeline, scope, per_clip, reel_cfg=None, skip_current=False):
     """
     Returns (jobs, note).
 
@@ -642,8 +644,17 @@ def build_jobs(timeline, scope, per_clip, reel_cfg=None):
             reel, len(items), total)
     else:
         items = selected_clips(timeline)
+        if skip_current:
+            # On the Color page 21.1.2 GetSelectedClips always includes the
+            # current clip, highlighted or not, so it is left out.
+            current = call_any(timeline, ["GetCurrentVideoItem"])
+            if current is not None:
+                skip = item_key(current)
+                items = [item for item in items if item_key(item) != skip]
         if not items:
-            raise RuntimeError("no clips selected in the timeline")
+            raise RuntimeError(
+                "no clips highlighted in the timeline" if skip_current
+                else "no clips selected in the timeline")
 
     extents = [clip_extent(item) for item in items]
     names = [call_any(item, ["GetName"]) or "clip" for item in items]
@@ -1192,8 +1203,9 @@ def run_gui(resolve_app, project, timeline):
 
         try:
             picked = chosen_presets()
-            jobs, note = build_jobs(timeline, scope, per_clip_on(),
-                                    reel_cfg())
+            jobs, note = build_jobs(
+                timeline, scope, per_clip_on(), reel_cfg(),
+                call_any(resolve_app, ["GetCurrentPage"]) == "color")
         except RuntimeError as err:
             itm["Summary"].PlainText = ""
             itm["Detail"].PlainText = ""

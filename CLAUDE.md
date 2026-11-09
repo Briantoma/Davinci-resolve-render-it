@@ -87,6 +87,13 @@ V0.05 functions and the 00_SrcePxy preset:
 - Render mode does not reliably come from the preset. Loading "Edit"
   always gave single clip, but "00_SrcePxy" and "DNX" kept whatever mode
   Deliver was already in. V0.07 sets the mode from a tick instead.
+- On the Color page `GetSelectedClips` always lists the current clip
+  first, whether it is highlighted or not. With nothing highlighted it
+  returns the current clip alone. There is no way to tell a highlighted
+  current clip from an unhighlighted one, so on Color the Selected clips
+  scope always leaves the current clip out (Thomas, 2026-11-09). To
+  include it, move the playhead off it. Other pages are untouched, their
+  behaviour is untested.
 - `LoadRenderPreset` does nothing when that preset is already the loaded
   one, so settings sent by an earlier run (a `CustomName`) survive it.
   `load_preset` loads another preset first to force a real reload.
@@ -98,8 +105,7 @@ V0.05 functions and the 00_SrcePxy preset:
 - In Individual clips mode Resolve widens MarkIn/MarkOut to whole clips:
   an in/out of 91000 to 91049 was stored as 90000 to 92333, the clip it
   sits in. V0.05 reports this as a mismatch.
-- Not covered: the window itself (UIManager items in 5), selected clips
-  scope (the API cannot select clips), and the page restore run from
+- Not covered: the window itself (UIManager items in 5), and the page restore run from
   inside the window (6).
 
 1. `MARK_FRAMES_ABSOLUTE`. The script sends absolute timeline frames

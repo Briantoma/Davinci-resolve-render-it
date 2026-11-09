@@ -378,6 +378,22 @@ def test_jobs(m):
     jobs, _ = m.build_jobs(timeline, "selected", False)
     check("adjacent selection fine", jobs[0]["out"] == 86599)
 
+    # Color page: Resolve lists the current clip first, highlighted or not
+    timeline = Timeline()
+    timeline.playhead = timeline.v1[2]
+    timeline.selection = [timeline.v1[2], timeline.v1[0], timeline.v1[1]]
+    jobs, _ = m.build_jobs(timeline, "selected", False, skip_current=True)
+    check("current clip left out on Color",
+          jobs[0]["clips"] == ["A001C003_230412", "A001C005_230412"],
+          str(jobs[0]["clips"]))
+    timeline.selection = [timeline.v1[2]]
+    try:
+        m.build_jobs(timeline, "selected", True, skip_current=True)
+        check("only the current clip refused", False)
+    except RuntimeError as err:
+        check("only the current clip refused",
+              "no clips highlighted" in str(err), str(err))
+
     # A title on V2 over everything is not a stranger to a V1 reel
     timeline = Timeline()
     timeline.v2 = [Item("Title", 86400, 87000, "8")]
