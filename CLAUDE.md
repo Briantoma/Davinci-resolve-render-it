@@ -86,8 +86,7 @@ V0.05 functions and the 00_SrcePxy preset:
   at the end of `queue()` is what brings it back.
 - Render mode does not reliably come from the preset. Loading "Edit"
   always gave single clip, but "00_SrcePxy" and "DNX" kept whatever mode
-  Deliver was already in. This undercuts `FOLLOW_PRESET_RENDER_MODE`,
-  see Open items.
+  Deliver was already in. V0.07 sets the mode from a tick instead.
 - `GetCurrentTimecode` returns the playhead as timeline timecode, which
   converts to the same absolute frames as `GetStart()` (V0.06 relies on
   this to find the reel under the playhead). Drop frame is untested.
@@ -123,11 +122,12 @@ V0.05 functions and the 00_SrcePxy preset:
 
 ## Decisions already taken, do not quietly reverse them
 
-- Render mode comes from the preset. `FOLLOW_PRESET_RENDER_MODE` is True
-  and the script does not call `SetCurrentRenderMode`. A tick in the window
-  was considered and rejected: it would be a third place the mode is
-  decided and it would silently win over the preset. The queue report names
-  the mode each preset used instead. Thomas may still ask for the tick.
+- Render mode comes from the Individual clips tick in the window, set with
+  `SetCurrentRenderMode` on every run and read back; Resolve keeping
+  another mode stops the queue in red. Reversed on 2026-11-09 from "the
+  preset decides" (V0.05), because 21.1.2 presets do not reliably carry
+  the mode, so the same preset queued differently depending on what was
+  last done on Deliver. The tick is saved as `individual_clips`.
 - `CustomName` is only honoured in single clip mode. A preset set to
   individual clips ignores our names, which is right for dailies and wrong
   for one job per clip. The report says so when both happen together.
@@ -191,9 +191,6 @@ API mistakes. Anything in "Verify first" is outside what it can see.
   scripting. Still to click through by hand: the window itself, selected
   clips scope, the symlinked install, and the page restore from inside
   the window.
-- Render mode: decide whether the window forces it, since presets do not
-  reliably carry it (see Verify first).
-- Thomas may want the individual clips tick after all.
 - `Custom` is not in the factory list he pasted. If a preset by that name
   shows in the dropdown, add it.
 - No UI for creating render presets, and there should not be. That is the

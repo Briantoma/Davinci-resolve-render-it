@@ -38,6 +38,9 @@ V0.06: fixed filename, version in the window title. Frames are checked
        selection. The reel is found under the playhead on any track.
        Individual clips presets widen the range to whole clips, which is
        reported instead of being called a mismatch.
+V0.07: Individual clips tick, applied on every run, because a preset does
+       not reliably set the render mode on 21.1.2.
+       A lone in or out point is named instead of an unreadable shape.
 
 Things this build deliberately does not do:
   It starts rendering only when the Start tick is on, and never when a
@@ -55,7 +58,7 @@ import re
 
 # ---------------------------------------------------------------- settings
 
-VERSION = "0.06"
+VERSION = "0.07"
 
 PRESET_PREFIX = ""        # optional extra filter, e.g. "SL_". Empty = off.
 
@@ -85,10 +88,9 @@ SUFFIX_PRESET_NAME = True
 
 MAX_PRESET_ROWS = 6
 
-FOLLOW_PRESET_RENDER_MODE = True
-# The preset decides single clip or individual clips, and the queue report
-# says which one each preset used. Set False to force single clip, which is
-# what V0.01 to V0.04 did.
+# Render mode is set from the Individual clips tick on every run. On 21.1.2
+# a preset does not reliably carry it: "Edit" always loaded as single clip,
+# others kept whatever mode Deliver was left in.
 #
 # Worth knowing: CustomName is only honoured in single clip mode. A preset
 # set to individual clips names files from the source and ignores the names
@@ -531,6 +533,13 @@ def inout_extent(timeline):
             break
     if not block:
         raise RuntimeError("no in/out range set on this timeline")
+    # Resolve 21.1.2 returns a lone out point as {"out": n} with no "in".
+    has_in = "in" in block or "In" in block
+    has_out = "out" in block or "Out" in block
+    if has_in != has_out:
+        raise RuntimeError("only an %s point is set on this timeline, set "
+                           "the %s point too"
+                           % (("in", "out") if has_in else ("out", "in")))
 
     try:
         mark_in = int(block.get("in", block.get("In")))
@@ -687,7 +696,8 @@ def render_marks(mark_in, mark_out, start):
 RENDER_MODE_NAMES = {0: "individual clips", 1: "single clip"}
 
 
-def queue_jobs(project, timeline, presets, target_dir, jobs):
+def queue_jobs(project, timeline, presets, target_dir, jobs,
+               individual=False):
     """
     Queues every job against every preset. Returns (job ids, report lines).
 
@@ -703,10 +713,14 @@ def queue_jobs(project, timeline, presets, target_dir, jobs):
         if not project.LoadRenderPreset(preset):
             raise RuntimeError("Resolve refused the preset '%s'" % preset)
 
-        if not FOLLOW_PRESET_RENDER_MODE:
-            call_any(project, ["SetCurrentRenderMode"], 1)
-
+        wanted_mode = 0 if individual else 1
+        call_any(project, ["SetCurrentRenderMode"], wanted_mode)
         mode = call_any(project, ["GetCurrentRenderMode"])
+        if mode != wanted_mode:
+            raise RuntimeError(
+                "Resolve kept render mode %s for '%s', %d jobs queued "
+                "before it" % (RENDER_MODE_NAMES.get(mode, mode), preset,
+                               len(queued)))
         mode_name = RENDER_MODE_NAMES.get(mode, "render mode %s" % mode)
         warn = ""
         if mode == 0 and len(jobs) > 1:
@@ -918,7 +932,12 @@ def run_gui(resolve_app, project, timeline):
                          "Text": "Start rendering after adding",
                          "Checked": bool(saved.get("start_render", False)),
                          "Weight": 0,
-                         "MinimumSize": [250, FIELD_H]}),
+                         "MinimumSize": [230, FIELD_H]}),
+            ui.CheckBox({"ID": "Individual", "Text": "Individual clips",
+                         "Checked": bool(saved.get("individual_clips",
+                                                   False)),
+                         "Weight": 0,
+                         "MinimumSize": [160, FIELD_H]}),
             ui.Label({"Text": "", "Weight": 1}),
         ]),
 
@@ -1205,6 +1224,7 @@ def run_gui(resolve_app, project, timeline):
             "reel_chars": itm["ReelChars"].Text,
             "reel_regex": itm["ReelRegex"].Text,
             "start_render": bool(itm["StartRender"].Checked),
+            "individual_clips": bool(itm["Individual"].Checked),
             "custom_only": bool(itm["CustomOnly"].Checked),
             "show_preview": preview_on(),
         })
@@ -1237,7 +1257,7 @@ def run_gui(resolve_app, project, timeline):
 
         try:
             queued, lines = queue_jobs(project, timeline, picked, target,
-                                       jobs)
+                                       jobs, bool(itm["Individual"].Checked))
         except RuntimeError as err:
             itm["QueueButton"].Enabled = True
             if page:

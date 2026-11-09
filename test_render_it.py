@@ -326,6 +326,13 @@ def test_jobs(m):
     jobs, _ = m.build_jobs(timeline, "inout", False)
     check("inout shifted to absolute", jobs[0]["in"] == 86500,
           str(jobs[0]["in"]))
+    timeline.marks = {"video": {"out": 339}, "audio": {"out": 339}}
+    try:
+        m.build_jobs(timeline, "inout", False)
+        check("lone out point refused", False)
+    except RuntimeError as err:
+        check("lone out point refused", "only an out point" in str(err),
+              str(err))
 
     timeline.playhead = timeline.v1[3]
     try:
@@ -404,7 +411,23 @@ def test_queue(m):
 
     project = Project(mode=0)
     m.queue_jobs(project, Timeline(), ["SL Dailies ProRes"], "/tmp", jobs)
-    check("preset mode left alone", project.mode == 0)
+    check("single clip forced when unticked", project.mode == 1)
+    project = Project(mode=1)
+    _, lines = m.queue_jobs(project, Timeline(), ["SL Dailies ProRes"],
+                            "/tmp", jobs, individual=True)
+    check("individual forced when ticked",
+          project.mode == 0 and "individual clips" in lines[0], lines[0])
+
+    class Stubborn(Project):
+        def SetCurrentRenderMode(self, mode):
+            return False
+    try:
+        m.queue_jobs(Stubborn(mode=1), Timeline(), ["SL Dailies ProRes"],
+                     "/tmp", jobs, individual=True)
+        check("refused mode reported", False)
+    except RuntimeError as err:
+        check("refused mode reported", "kept render mode" in str(err),
+              str(err))
 
     project = Project()
     m.queue_jobs(project, Timeline(), ["SL Dailies ProRes"], "/tmp", jobs)
@@ -418,11 +441,12 @@ def test_queue(m):
             return job_id
     inside = [{"name": "x", "in": 86650, "out": 86699, "clips": [],
                "reel": None}]
-    _, lines = m.queue_jobs(Widening(mode=0), Timeline(),
-                            ["SL Dailies ProRes"], "/tmp", inside)
+    _, lines = m.queue_jobs(Widening(), Timeline(),
+                            ["SL Dailies ProRes"], "/tmp", inside,
+                            individual=True)
     check("individual widening accepted",
           "widened" in lines[1] and "MISMATCH" not in lines[1], lines[1])
-    _, lines = m.queue_jobs(Widening(mode=1), Timeline(),
+    _, lines = m.queue_jobs(Widening(), Timeline(),
                             ["SL Dailies ProRes"], "/tmp", inside)
     check("single clip widening is a mismatch", "MISMATCH" in lines[1],
           lines[1])
@@ -481,6 +505,7 @@ def test_window(m):
 
         itm["TargetDir"].Text = "/tmp"
         itm["StartRender"].Checked = True
+        itm["Individual"].Checked = True
         win.On.QueueButton.Clicked(None)
         seen["queued_status"] = itm["Status"].Text
         seen["report"] = itm["Summary"].PlainText
@@ -514,6 +539,9 @@ def test_window(m):
           seen["queued_status"])
     check("render started", project.started is not None)
     check("page restored", app.page == "color", app.page)
+    check("tick sets individual mode", project.mode == 0)
+    check("tick remembered",
+          m.load_settings().get("individual_clips") is True)
     check("report names the preset",
           CUSTOM[0] in seen["report"], seen["report"])
 
