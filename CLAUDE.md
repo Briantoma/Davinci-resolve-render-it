@@ -186,12 +186,16 @@ Taken with Thomas on 2026-11-09, for V0.06:
   whole clips. The read back accepts that range and the report says
   "widened to whole clips by Individual clips" in plain text. Anything
   else that differs is still a mismatch.
-- Current reel reports missing clip numbers in plain text, never in red
-  (V0.10). The clip number is the C plus 2 to 4 digits right after the
-  reel part of the name (C0003C015 gives 15), so it follows whichever
-  reel naming preset is chosen. Proxy copies sharing a number count once.
-  Numbers before the first or after the last clip present cannot be
-  seen, only holes in between.
+- Current reel reports missing clip numbers (V0.10). The clip number is
+  the C plus 2 to 4 digits right after the reel part of the name
+  (C0003C015 gives 15), so it follows whichever reel naming preset is
+  chosen. Proxy copies sharing a number count once. Every reel starts at
+  C001 (Thomas, V0.13), so a reel starting at C003 is missing C001 and
+  C002. Clips after the last one present cannot be seen.
+- A reel with missing numbers opens a pop up before anything is queued:
+  Queue anyway or Cancel (V0.13). It is a second UIManager window
+  answered inside the same event loop, no nested RunLoop. Frame gaps
+  between clips do not trigger it, they stay a plain text note.
 - The window opens `WINDOW_START_H` (1000) tall and never asks for less
   (V0.11). Thomas saw on 21.1 that assigning `win.Geometry` does not
   resize an open window, so growing it with the preview did nothing.

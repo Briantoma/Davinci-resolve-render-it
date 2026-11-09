@@ -99,10 +99,10 @@ class Window(object):
         self.layouts += 1
 
     def Show(self):
-        pass
+        self.shown = True
 
     def Hide(self):
-        pass
+        self.shown = False
 
 
 class Dispatcher(object):
@@ -111,7 +111,11 @@ class Dispatcher(object):
 
     def AddWindow(self, props, children):
         window = Window(props, children)
-        self.bucket["win"] = window
+        window.bucket = self.bucket
+        if "win" in self.bucket:
+            self.bucket.setdefault("extra", []).append(window)
+        else:
+            self.bucket["win"] = window
         return window
 
     def ExitLoop(self):
@@ -301,6 +305,18 @@ def drive(module, body, project=None, timeline=None, app=None):
 RESULTS = []
 
 
+def answer_gap(win, go=True):
+    """Press a button on the missing clips pop up, if it is showing."""
+    for extra in win.bucket.get("extra", []):
+        if getattr(extra, "shown", False):
+            if go:
+                extra.On.GapGo.Clicked(None)
+            else:
+                extra.On.GapCancel.Clicked(None)
+            return True
+    return False
+
+
 def check(label, condition, detail=""):
     RESULTS.append((label, bool(condition), detail))
 
@@ -329,14 +345,17 @@ def test_jobs(m):
           str(jobs[0]["clips"]))
     check("gap reported", "gap" in note, note)
     check("missing clip numbers reported",
-          "clip numbers missing: C004, C006, C008" in note, note)
+          "clip numbers missing: C001, C002, C004, C006, C008" in note,
+          note)
     sony = ("cam_letter", m.DEFAULT_CUSTOM_REGEX, 4)
     check("clip number after a C reel",
           m.clip_number("C0003C015_261106_175813N2_FSY48.mov", sony)
           == (15, 3))
     check("proxy copy same number", m.missing_clip_numbers(
-        ["C0003C015_x.mov", "C0003C015_f0-2333.mov", "C0003C016_y.mov"],
+        ["C0003C001_x.mov", "C0003C001_f0-2333.mov", "C0003C002_y.mov"],
         sony) == [])
+    check("counted from C001", m.missing_clip_numbers(
+        ["C0003C003_x.mov"], sony) == ["C001", "C002"])
     check("first_n clip number",
           m.clip_number("A_0001C004", ("first_n", None, 6)) == (4, 3))
 
@@ -570,6 +589,7 @@ def test_window(m):
         itm["StartRender"].Checked = True
         itm["Individual"].Checked = True
         win.On.QueueButton.Clicked(None)
+        seen["asked"] = answer_gap(win)
         seen["queued_status"] = itm["Status"].Text
         seen["report"] = itm["Summary"].PlainText
 
@@ -600,6 +620,7 @@ def test_window(m):
           seen["chars_shown"] and not seen["regex_shown"])
     check("missing folder refused", "does not exist" in seen["bad_dir"],
           seen["bad_dir"])
+    check("gap asked before queueing", seen["asked"])
     check("queued and rendering", "rendering" in seen["queued_status"],
           seen["queued_status"])
     check("render started", project.started is not None)
@@ -628,6 +649,7 @@ def test_bad_frames_block_start(m):
         itm["TargetDir"].Text = "/tmp"
         itm["StartRender"].Checked = True
         win.On.QueueButton.Clicked(None)
+        answer_gap(win)
         seen["status"] = itm["Status"].Text
         seen["red"] = bool(itm["Status"].StyleSheet)
 
@@ -674,6 +696,40 @@ def test_long_preview(m):
           str(huge["height"]))
 
 
+def test_gap_popup(m):
+    seen = {}
+
+    def body(win):
+        itm = win.items
+        itm["TargetDir"].Text = "/tmp"
+        win.On.QueueButton.Clicked(None)
+        seen["asked"] = answer_gap(win, go=False)
+        seen["status"] = itm["Status"].Text
+        seen["button"] = itm["QueueButton"].Enabled
+        seen["text"] = win.bucket["extra"][0].items["GapText"].Text
+
+    _win, project, _t, _app = drive(m, body)
+    check("gap pop up shown", seen["asked"])
+    check("pop up names the clips", "C001, C002, C004" in seen["text"],
+          seen["text"])
+    check("cancel queues nothing", project.jobs == [])
+    check("cancel says why", "missing" in seen["status"], seen["status"])
+    check("cancel gives the button back", seen["button"])
+
+    timeline = Timeline()
+    for n, item in enumerate(timeline.v1[:3]):
+        item.name = "A001C%03d_230412" % (n + 1)
+    timeline.v2 = []
+
+    def plain(win):
+        win.items["TargetDir"].Text = "/tmp"
+        win.On.QueueButton.Clicked(None)
+        seen["asked_plain"] = answer_gap(win)
+
+    _win, project, _t, _app = drive(m, plain, timeline=timeline)
+    check("no gap, no pop up", not seen["asked_plain"] and project.jobs)
+
+
 def test_keys_and_single_instance(m):
     seen = {}
 
@@ -682,6 +738,7 @@ def test_keys_and_single_instance(m):
         itm["TargetDir"].Text = "/tmp"
         itm["StartRender"].Checked = True
         win.On.RenderItWin.KeyPress({"Key": 0x01000004})
+        answer_gap(win)
         seen["status"] = itm["Status"].Text
 
     _win, project, _t, _app = drive(m, body)
@@ -717,7 +774,8 @@ def main():
                                           module.VERSION))
     for test in (test_reel_detection, test_jobs, test_presets,
                  test_queue, test_window, test_bad_frames_block_start,
-                 test_long_preview, test_keys_and_single_instance):
+                 test_long_preview, test_keys_and_single_instance,
+                 test_gap_popup):
         test(module)
 
     failed = 0

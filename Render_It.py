@@ -52,6 +52,8 @@ V0.11: the window opens WINDOW_START_H tall, since assigning Geometry
        does not resize it on 21.1. Growth past that tries win.Resize.
 V0.12: only one Render It window at a time, a second launch brings the
        open one forward. Return or Enter presses Add to queue.
+V0.13: missing clip numbers count from C001, and a reel with missing
+       numbers asks in a pop up before it is queued.
 
 Things this build deliberately does not do:
   It starts rendering only when the Start tick is on, and never when a
@@ -71,7 +73,7 @@ import tempfile
 
 # ---------------------------------------------------------------- settings
 
-VERSION = "0.12"
+VERSION = "0.13"
 
 PRESET_PREFIX = ""        # optional extra filter, e.g. "SL_". Empty = off.
 
@@ -356,15 +358,19 @@ def clip_number(name, reel_cfg):
 
 
 def missing_clip_numbers(names, reel_cfg):
-    """Clip numbers absent between the lowest and highest in the reel."""
+    """
+    Clip numbers absent from C001 up to the highest in the reel. Every
+    reel starts at clip 1, so a reel starting at C003 is missing C001 and
+    C002.
+    """
     numbers = [clip_number(name, reel_cfg) for name in names]
     numbers = [n for n in numbers if n]
-    if len(numbers) < 2:
+    if not numbers:
         return []
     width = max(w for _, w in numbers)
     seen = set(n for n, _ in numbers)
     return ["C%0*d" % (width, n)
-            for n in range(min(seen), max(seen) + 1) if n not in seen]
+            for n in range(1, max(seen) + 1) if n not in seen]
 
 
 def reel_match(name, preset, custom_regex, chars):
@@ -677,6 +683,7 @@ def build_jobs(timeline, scope, per_clip, reel_cfg=None, skip_current=False):
                  "reel": None}], note
 
     reel = None
+    missing = []
     if scope == "reel":
         reel_cfg = reel_cfg or (PRESET_KEYS[0], DEFAULT_CUSTOM_REGEX,
                                 DEFAULT_REEL_CHARS)
@@ -721,7 +728,8 @@ def build_jobs(timeline, scope, per_clip, reel_cfg=None, skip_current=False):
         for name, (mark_in, mark_out) in zip(names, extents):
             jobs.append({"name": unique_name(sanitise(name), used),
                          "in": mark_in, "out": mark_out,
-                         "clips": [name], "reel": None})
+                         "clips": [name], "reel": None,
+                         "missing": missing})
         return jobs, note
 
     mark_in = min(pair[0] for pair in extents)
@@ -748,7 +756,7 @@ def build_jobs(timeline, scope, per_clip, reel_cfg=None, skip_current=False):
 
     return [{"name": sanitise(reel or timeline.GetName()),
              "in": mark_in, "out": mark_out,
-             "clips": names, "reel": reel}], note
+             "clips": names, "reel": reel, "missing": missing}], note
 
 
 def render_marks(mark_in, mark_out, start):
@@ -1370,7 +1378,7 @@ def run_gui(resolve_app, project, timeline):
         })
 
     # ---- queue
-    def queue(_event=None):
+    def queue(_event=None, confirmed=False):
         target = (itm["TargetDir"].Text or "").strip()
         if not target:
             set_status("set a destination folder first", error=True)
@@ -1386,6 +1394,11 @@ def run_gui(resolve_app, project, timeline):
             picked = chosen_presets()
         except RuntimeError as err:
             set_status(str(err), error=True)
+            return
+
+        missing = jobs[0].get("missing") or []
+        if missing and not confirmed:
+            ask_about_gap(missing)
             return
 
         itm["QueueButton"].Enabled = False
@@ -1452,7 +1465,62 @@ def run_gui(resolve_app, project, timeline):
         if CLOSE_ON_SUCCESS and not failed:
             close()
 
+    # ---- gap confirmation
+    def ask_about_gap(missing):
+        """A second window, answered inside the same event loop."""
+        if "gap_win" not in state:
+            gap = disp.AddWindow({
+                "ID": "RenderItGap",
+                "WindowTitle": "Render It: clips missing",
+                "Geometry": [400, 300, 460, 170],
+                "Events": {"KeyPress": True, "Close": True},
+            }, [ui.VGroup({"Spacing": 8}, [
+                ui.Label({"ID": "GapText", "WordWrap": True, "Weight": 1}),
+                ui.HGroup({"Weight": 0}, [
+                    ui.Label({"Text": "", "Weight": 1}),
+                    ui.Button({"ID": "GapCancel", "Text": "Cancel",
+                               "Weight": 0}),
+                    ui.Button({"ID": "GapGo", "Text": "Queue anyway",
+                               "Weight": 0}),
+                ]),
+            ])])
+            state["gap_win"] = gap
+            state["gap_itm"] = gap.GetItems()
+            gap.On.GapGo.Clicked = gap_go
+            gap.On.GapCancel.Clicked = gap_cancel
+            gap.On.RenderItGap.Close = gap_cancel
+            gap.On.RenderItGap.KeyPress = gap_key
+        shown = ", ".join(missing[:20])
+        if len(missing) > 20:
+            shown += " and %d more" % (len(missing) - 20)
+        state["gap_itm"]["GapText"].Text = (
+            "This reel is missing clip number%s %s.\n\nQueue it anyway?"
+            % ("" if len(missing) == 1 else "s", shown))
+        itm["QueueButton"].Enabled = False
+        state["gap_win"].Show()
+
+    def hide_gap():
+        itm["QueueButton"].Enabled = True
+        if "gap_win" in state:
+            state["gap_win"].Hide()
+
+    def gap_go(_event=None):
+        hide_gap()
+        queue(confirmed=True)
+
+    def gap_cancel(_event=None):
+        hide_gap()
+        set_status("not queued, clip numbers missing", error=True)
+
+    def gap_key(event):
+        try:
+            if event["Key"] == 0x01000000:       # Qt::Key_Escape
+                gap_cancel()
+        except Exception:
+            pass
+
     def close(_event=None):
+        hide_gap()
         remember()
         disp.ExitLoop()
 
