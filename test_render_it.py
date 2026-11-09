@@ -146,6 +146,7 @@ class Project(object):
         return "25.0"
 
     def LoadRenderPreset(self, name):
+        self.loads = getattr(self, "loads", []) + [name]
         return name in self.presets
 
     def GetCurrentRenderMode(self):
@@ -243,8 +244,19 @@ class Timeline(object):
 
 
 class App(object):
+    """Presets whose name contains 'Dailies' are set to Source name."""
+
     def __init__(self):
         self.page = "color"
+
+    def ExportRenderPreset(self, name, path):
+        # 21.1.2 makes a folder at the path and writes the file inside it
+        os.makedirs(path)
+        with open(os.path.join(path, name + ".xml"), "w") as handle:
+            handle.write("<UsePrefixAndSuffixFromSrc>%d"
+                         "</UsePrefixAndSuffixFromSrc>"
+                         % ("Dailies" in name))
+        return True
 
     def GetCurrentPage(self):
         return self.page
@@ -450,6 +462,25 @@ def test_queue(m):
                             ["SL Dailies ProRes"], "/tmp", inside)
     check("single clip widening is a mismatch", "MISMATCH" in lines[1],
           lines[1])
+
+    project = Project()
+    _, lines = m.queue_jobs(project, Timeline(),
+                            ["SL Dailies ProRes", "SL Review H264"], "/tmp",
+                            jobs, resolve_app=App())
+    check("source name preset gets no CustomName",
+          "CustomName" not in project.jobs[0], str(project.jobs[0]))
+    check("source name reported", "from the source" in lines[0], lines[0])
+    check("source job labelled", lines[1].strip().startswith(
+        "A001, source names"), lines[1])
+    check("custom preset still named",
+          project.jobs[1].get("CustomName") == "A001_SL Review H264",
+          str(project.jobs[1]))
+    check("preset reloaded through another",
+          project.loads[:2] == [FACTORY[0], "SL Dailies ProRes"],
+          str(project.loads))
+    _, lines = m.queue_jobs(Project(), Timeline(), ["SL Dailies ProRes"],
+                            "/tmp", jobs)
+    check("unreadable naming said", "could not read" in lines[0], lines[0])
 
     class Dead(Project):
         def AddRenderJob(self):

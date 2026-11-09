@@ -87,6 +87,11 @@ V0.05 functions and the 00_SrcePxy preset:
 - Render mode does not reliably come from the preset. Loading "Edit"
   always gave single clip, but "00_SrcePxy" and "DNX" kept whatever mode
   Deliver was already in. V0.07 sets the mode from a tick instead.
+- `LoadRenderPreset` does nothing when that preset is already the loaded
+  one, so settings sent by an earlier run (a `CustomName`) survive it.
+  `load_preset` loads another preset first to force a real reload.
+- `ExportRenderPreset` lives on the Resolve object, not the project, and
+  makes a folder at the given path with the preset file inside.
 - `GetCurrentTimecode` returns the playhead as timeline timecode, which
   converts to the same absolute frames as `GetStart()` (V0.06 relies on
   this to find the reel under the playhead). Drop frame is untested.
@@ -128,9 +133,15 @@ V0.05 functions and the 00_SrcePxy preset:
   preset decides" (V0.05), because 21.1.2 presets do not reliably carry
   the mode, so the same preset queued differently depending on what was
   last done on Deliver. The tick is saved as `individual_clips`.
-- `CustomName` is only honoured in single clip mode. A preset set to
-  individual clips ignores our names, which is right for dailies and wrong
-  for one job per clip. The report says so when both happen together.
+- File names follow the preset (V0.08). A preset set to Source name gets
+  no `CustomName`, so it keeps source file names. A preset with a custom
+  name gets the job name (reel, clip or timeline). The handover claim
+  that `CustomName` is ignored in Individual clips mode was wrong: on
+  21.1.2 it replaces the source names there too, which is the bug Thomas
+  hit. The naming is read by exporting the preset to a temp folder and
+  reading `UsePrefixAndSuffixFromSrc` (1 = Source name), since the API
+  has no getter. If that cannot be read, the job name is used and the
+  report says so.
 - Custom presets are identified by excluding a hardcoded list of the 37
   factory names from a stock 21.1 install, because the API exposes no
   origin flag. A renamed or newly added factory preset reappears in the

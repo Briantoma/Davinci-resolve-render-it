@@ -41,6 +41,9 @@ V0.06: fixed filename, version in the window title. Frames are checked
 V0.07: Individual clips tick, applied on every run, because a preset does
        not reliably set the render mode on 21.1.2.
        A lone in or out point is named instead of an unreadable shape.
+V0.08: a preset set to Source name keeps its source file names, the
+       script only names files for presets with a custom name. Presets
+       are reloaded for real, so a name from an earlier run cannot stick.
 
 Things this build deliberately does not do:
   It starts rendering only when the Start tick is on, and never when a
@@ -55,10 +58,12 @@ after every AddRenderJob stays, since it is what catches a future change.
 import json
 import os
 import re
+import shutil
+import tempfile
 
 # ---------------------------------------------------------------- settings
 
-VERSION = "0.07"
+VERSION = "0.08"
 
 PRESET_PREFIX = ""        # optional extra filter, e.g. "SL_". Empty = off.
 
@@ -92,10 +97,9 @@ MAX_PRESET_ROWS = 6
 # a preset does not reliably carry it: "Edit" always loaded as single clip,
 # others kept whatever mode Deliver was left in.
 #
-# Worth knowing: CustomName is only honoured in single clip mode. A preset
-# set to individual clips names files from the source and ignores the names
-# below, which is usually what you want for dailies and never what you want
-# for a one job per clip pull.
+# File names follow the preset. A preset set to Source name gets no
+# CustomName, since on 21.1.2 sending one overrides the source names even in
+# Individual clips mode. A preset with a custom name gets the job name.
 
 MARK_FRAMES_ABSOLUTE = True
 # True  = MarkIn/MarkOut are absolute timeline frames (86400 at 01:00:00:00).
@@ -696,8 +700,52 @@ def render_marks(mark_in, mark_out, start):
 RENDER_MODE_NAMES = {0: "individual clips", 1: "single clip"}
 
 
+def preset_uses_source_name(resolve_app, preset):
+    """
+    True when the preset's file name is set to Source name, False when it
+    is custom, None when it cannot be read. The API has no getter for it,
+    so the preset is exported and its UsePrefixAndSuffixFromSrc read.
+    ExportRenderPreset on 21.1.2 makes a folder at the path it is given and
+    writes the file inside it.
+    """
+    exporter = getattr(resolve_app, "ExportRenderPreset", None)
+    if exporter is None:
+        return None
+    folder = tempfile.mkdtemp(prefix="render_it_")
+    try:
+        if not exporter(preset, os.path.join(folder, "preset.xml")):
+            return None
+        for root, _dirs, files in os.walk(folder):
+            for name in files:
+                with open(os.path.join(root, name)) as handle:
+                    found = re.search(
+                        r"<UsePrefixAndSuffixFromSrc>(\d)<", handle.read())
+                if found:
+                    return found.group(1) == "1"
+        return None
+    except Exception:
+        return None
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def load_preset(project, preset):
+    """
+    LoadRenderPreset does nothing on 21.1.2 when that preset is already the
+    loaded one, so a CustomName from an earlier run survives it. Loading a
+    different preset first forces a real reload.
+    """
+    for other in as_list(call_any(project, ["GetRenderPresetList"])):
+        if isinstance(other, dict):
+            other = other.get("PresetName") or other.get("Name")
+        if other and other != preset:
+            project.LoadRenderPreset(other)
+            break
+    return project.LoadRenderPreset(preset)
+
+
 def queue_jobs(project, timeline, presets, target_dir, jobs,
-               individual=False):
+               individual=False, resolve_app=None):
     """
     Queues every job against every preset. Returns (job ids, report lines).
 
@@ -710,8 +758,9 @@ def queue_jobs(project, timeline, presets, target_dir, jobs,
     multi = len(presets) > 1
 
     for preset in presets:
-        if not project.LoadRenderPreset(preset):
+        if not load_preset(project, preset):
             raise RuntimeError("Resolve refused the preset '%s'" % preset)
+        source_named = preset_uses_source_name(resolve_app, preset)
 
         wanted_mode = 0 if individual else 1
         call_any(project, ["SetCurrentRenderMode"], wanted_mode)
@@ -722,10 +771,12 @@ def queue_jobs(project, timeline, presets, target_dir, jobs,
                 "before it" % (RENDER_MODE_NAMES.get(mode, mode), preset,
                                len(queued)))
         mode_name = RENDER_MODE_NAMES.get(mode, "render mode %s" % mode)
-        warn = ""
-        if mode == 0 and len(jobs) > 1:
-            warn = ", Resolve names these files, not the list below"
-        lines.append("%s  [%s]%s" % (preset, mode_name, warn))
+        naming = ""
+        if source_named:
+            naming = ", file names from the source, as the preset says"
+        elif source_named is None:
+            naming = ", could not read the preset's file naming, used ours"
+        lines.append("%s  [%s]%s" % (preset, mode_name, naming))
 
         for job in jobs:
             out_name = job["name"]
@@ -737,8 +788,11 @@ def queue_jobs(project, timeline, presets, target_dir, jobs,
                 "MarkIn": send_in,
                 "MarkOut": send_out,
                 "TargetDir": target_dir,
-                "CustomName": out_name,
             }
+            # Sending CustomName switches Deliver to a custom name, in
+            # Individual clips mode too, so a Source name preset gets none.
+            if not source_named:
+                settings["CustomName"] = out_name
             if DRY_RUN:
                 lines.append("  dry run  %s  %d to %d"
                              % (out_name, send_in, send_out))
@@ -760,8 +814,9 @@ def queue_jobs(project, timeline, presets, target_dir, jobs,
                 wanted.append(render_marks(
                     *widen_to_clips(timeline, job["in"], job["out"]),
                     start=start))
-            lines.append("  " + read_back(project, job_id, out_name,
-                                          wanted))
+            label = out_name if not source_named else \
+                "%s, source names" % job["name"]
+            lines.append("  " + read_back(project, job_id, label, wanted))
 
     return queued, lines
 
@@ -1257,7 +1312,8 @@ def run_gui(resolve_app, project, timeline):
 
         try:
             queued, lines = queue_jobs(project, timeline, picked, target,
-                                       jobs, bool(itm["Individual"].Checked))
+                                       jobs, bool(itm["Individual"].Checked),
+                                       resolve_app)
         except RuntimeError as err:
             itm["QueueButton"].Enabled = True
             if page:
