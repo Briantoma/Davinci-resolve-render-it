@@ -186,6 +186,15 @@ Taken with Thomas on 2026-11-09, for V0.06:
   whole clips. The read back accepts that range and the report says
   "widened to whole clips by Individual clips" in plain text. Anything
   else that differs is still a mismatch.
+- Current reel reports missing clip numbers in plain text, never in red
+  (V0.10). The clip number is the C plus 2 to 4 digits right after the
+  reel part of the name (C0003C015 gives 15), so it follows whichever
+  reel naming preset is chosen. Proxy copies sharing a number count once.
+  Numbers before the first or after the last clip present cannot be
+  seen, only holes in between.
+- The preview grows the window to show every clip, 17 px a line, up to
+  `PREVIEW_MAX_H` (900), then scrolls. UIManager gives no screen size, so
+  the cap is a constant.
 - Known side effect, accepted: after a run, the Deliver page keeps the
   last preset loaded, our in/out, `SelectAllFrames` off and our custom
   name. The API cannot read every setting back, so restoring them would

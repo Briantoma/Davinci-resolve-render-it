@@ -46,6 +46,8 @@ V0.08: a preset set to Source name keeps its source file names, the
        are reloaded for real, so a name from an earlier run cannot stick.
 V0.09: on the Color page, Selected clips means the highlighted clips only,
        the current clip is left out.
+V0.10: the window grows to show every clip in the preview, up to
+       PREVIEW_MAX_H. Current reel reports missing clip numbers.
 
 Things this build deliberately does not do:
   It starts rendering only when the Start tick is on, and never when a
@@ -65,7 +67,7 @@ import tempfile
 
 # ---------------------------------------------------------------- settings
 
-VERSION = "0.09"
+VERSION = "0.10"
 
 PRESET_PREFIX = ""        # optional extra filter, e.g. "SL_". Empty = off.
 
@@ -149,7 +151,11 @@ FIELD_H = 26
 ROW_H = 32
 SUMMARY_H = 76           # three lines of per job summary
 CHROME_H = 176           # title, summary, bottom strip, margins
-PREVIEW_H = 130
+PREVIEW_H = 130          # smallest preview
+PREVIEW_LINE_H = 17      # one clip name in the preview
+PREVIEW_MAX_H = 900
+# shortcut: there is no screen size in UIManager, so the preview stops
+# growing at PREVIEW_MAX_H and scrolls past that. Raise it on a tall screen.
 
 SCOPES = [
     ("selected", "Selected clips"),
@@ -327,26 +333,55 @@ def reel_key(name, preset, custom_regex, chars):
     Same rules as the append script: the named groups cam and reel are
     joined, first_n takes a fixed slice, custom takes your own pattern.
     """
+    return reel_match(name, preset, custom_regex, chars)[0]
+
+
+CLIP_NUMBER = re.compile(r"[ _-]?C(\d{2,4})", re.IGNORECASE)
+
+
+def clip_number(name, reel_cfg):
+    """The clip number right after the reel, A001C015 gives 15, or None."""
+    key, end = reel_match(name, *reel_cfg)
+    if not key:
+        return None
+    found = CLIP_NUMBER.match((name or "").strip()[end:])
+    return (int(found.group(1)), len(found.group(1))) if found else None
+
+
+def missing_clip_numbers(names, reel_cfg):
+    """Clip numbers absent between the lowest and highest in the reel."""
+    numbers = [clip_number(name, reel_cfg) for name in names]
+    numbers = [n for n in numbers if n]
+    if len(numbers) < 2:
+        return []
+    width = max(w for _, w in numbers)
+    seen = set(n for n, _ in numbers)
+    return ["C%0*d" % (width, n)
+            for n in range(min(seen), max(seen) + 1) if n not in seen]
+
+
+def reel_match(name, preset, custom_regex, chars):
+    """(reel key or None, index where the reel part of the name ends)."""
     name = (name or "").strip()
     if not name:
-        return None
+        return None, 0
 
     if preset == "first_n":
         try:
             count = max(1, int(chars))
         except Exception:
             count = DEFAULT_REEL_CHARS
-        return (name[:count] or None) and name[:count].upper()
+        return (name[:count].upper() or None), count
 
     pattern = custom_regex if preset == "custom" else PRESET_REGEX.get(preset)
     if not pattern:
-        return None
+        return None, 0
     try:
         match = re.match(pattern, name)
     except re.error as err:
         raise RuntimeError("that regex will not compile: %s" % err)
     if not match:
-        return None
+        return None, 0
 
     try:
         groups = match.groupdict()
@@ -355,7 +390,7 @@ def reel_key(name, preset, custom_regex, chars):
     cam = (groups.get("cam") or "").upper()
     number = groups.get("reel") or ""
     key = (cam + number) or match.group(0)
-    return key.upper() or None
+    return (key.upper() or None), match.end()
 
 
 def all_video_items(timeline):
@@ -636,12 +671,19 @@ def build_jobs(timeline, scope, per_clip, reel_cfg=None, skip_current=False):
 
     reel = None
     if scope == "reel":
-        reel, items, total = reel_scope(timeline, reel_cfg or
-                                        (PRESET_KEYS[0],
-                                         DEFAULT_CUSTOM_REGEX,
-                                         DEFAULT_REEL_CHARS))
+        reel_cfg = reel_cfg or (PRESET_KEYS[0], DEFAULT_CUSTOM_REGEX,
+                                DEFAULT_REEL_CHARS)
+        reel, items, total = reel_scope(timeline, reel_cfg)
         note = "reel %s, %d of %d clips in the timeline" % (
             reel, len(items), total)
+        missing = missing_clip_numbers(
+            [call_any(item, ["GetName"]) for item in items], reel_cfg)
+        if missing:
+            shown = ", ".join(missing[:12])
+            if len(missing) > 12:
+                shown += " and %d more" % (len(missing) - 12)
+            note += ", clip number%s missing: %s" % (
+                "" if len(missing) == 1 else "s", shown)
     else:
         items = selected_clips(timeline)
         if skip_current:
@@ -1173,7 +1215,9 @@ def run_gui(resolve_app, project, timeline):
         # preset rows + custom only, selection, reel naming, options,
         # preview tick, destination
         rows = state["rows"] + 6 + (1 if extra_row_on() else 0)
-        height = CHROME_H + rows * ROW_H + (PREVIEW_H if preview_on() else 0)
+        preview_h = min(PREVIEW_MAX_H, max(
+            PREVIEW_H, state.get("preview_lines", 0) * PREVIEW_LINE_H + 12))
+        height = CHROME_H + rows * ROW_H + (preview_h if preview_on() else 0)
         try:
             geo = win.Geometry
             win.Geometry = [geo[0], geo[1], geo[2], height]
@@ -1228,6 +1272,9 @@ def run_gui(resolve_app, project, timeline):
             else:
                 preview.extend(job["clips"])
         itm["Detail"].PlainText = "\n".join(preview)
+        if len(preview) != state.get("preview_lines"):
+            state["preview_lines"] = len(preview)
+            apply_layout()
 
         set_status(note or state.get("preset_note", ""))
         return jobs

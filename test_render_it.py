@@ -323,6 +323,17 @@ def test_jobs(m):
     check("reel clip count", len(jobs[0]["clips"]) == 4,
           str(jobs[0]["clips"]))
     check("gap reported", "gap" in note, note)
+    check("missing clip numbers reported",
+          "clip numbers missing: C004, C006, C008" in note, note)
+    sony = ("cam_letter", m.DEFAULT_CUSTOM_REGEX, 4)
+    check("clip number after a C reel",
+          m.clip_number("C0003C015_261106_175813N2_FSY48.mov", sony)
+          == (15, 3))
+    check("proxy copy same number", m.missing_clip_numbers(
+        ["C0003C015_x.mov", "C0003C015_f0-2333.mov", "C0003C016_y.mov"],
+        sony) == [])
+    check("first_n clip number",
+          m.clip_number("A_0001C004", ("first_n", None, 6)) == (4, 3))
 
     jobs, _ = m.build_jobs(timeline, "reel", True,
                            ("cam_letter", m.DEFAULT_CUSTOM_REGEX, 4))
@@ -627,6 +638,35 @@ def test_bad_frames_block_start(m):
     check("bad frames: page restored", app.page == "color", app.page)
 
 
+def test_long_preview(m):
+    seen = {}
+
+    def body(win):
+        itm = win.items
+        itm["ShowPreview"].Checked = True
+        win.On.ShowPreview.Clicked(None)
+        seen["height"] = win.Geometry[3]
+        seen["lines"] = itm["Detail"].PlainText.count("\n") + 1
+
+    def drive_with(count):
+        timeline = Timeline()
+        timeline.v1 = [Item("A001C%03d_230412" % n, 86400 + n * 10,
+                            86410 + n * 10, str(n)) for n in range(count)]
+        timeline.v2 = []
+        timeline.playhead = timeline.v1[0]
+        drive(m, body, timeline=timeline)
+        return dict(seen)
+
+    short, longer, huge = drive_with(4), drive_with(40), drive_with(300)
+    check("long preview grows the window",
+          longer["height"] - short["height"]
+          == 40 * m.PREVIEW_LINE_H + 12 - m.PREVIEW_H,
+          "%s -> %s" % (short["height"], longer["height"]))
+    check("preview growth capped",
+          huge["height"] - short["height"] <= m.PREVIEW_MAX_H,
+          str(huge["height"]))
+
+
 def main():
     if len(sys.argv) > 1:
         path = sys.argv[1]
@@ -638,7 +678,8 @@ def main():
     print("testing %s (reports v%s)\n" % (os.path.basename(path),
                                           module.VERSION))
     for test in (test_reel_detection, test_jobs, test_presets,
-                 test_queue, test_window, test_bad_frames_block_start):
+                 test_queue, test_window, test_bad_frames_block_start,
+                 test_long_preview):
         test(module)
 
     failed = 0
