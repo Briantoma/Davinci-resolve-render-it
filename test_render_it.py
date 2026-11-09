@@ -578,8 +578,10 @@ def test_window(m):
     check("preview lists clip names",
           "A001C003_230412" in seen["preview"])
     check("preview hidden by default", seen["preview_hidden"])
-    check("preview grows the window", seen["tall"] > seen["short"],
-          "%s -> %s" % (seen["short"], seen["tall"]))
+    check("window opens tall", seen["short"] == m.WINDOW_START_H,
+          str(seen["short"]))
+    check("short preview fits the start height",
+          seen["tall"] == m.WINDOW_START_H, str(seen["tall"]))
     check("untick shows everything",
           len(seen["all"]) == len(FACTORY) + len(CUSTOM))
     check("row keeps its preset across the tick",
@@ -658,9 +660,9 @@ def test_long_preview(m):
         return dict(seen)
 
     short, longer, huge = drive_with(4), drive_with(40), drive_with(300)
-    check("long preview grows the window",
-          longer["height"] - short["height"]
-          == 40 * m.PREVIEW_LINE_H + 12 - m.PREVIEW_H,
+    check("long preview grows past the start height",
+          longer["height"] == m.CHROME_H + 7 * m.ROW_H
+          + 40 * m.PREVIEW_LINE_H + 12,
           "%s -> %s" % (short["height"], longer["height"]))
     check("preview growth capped",
           huge["height"] - short["height"] <= m.PREVIEW_MAX_H,

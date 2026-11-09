@@ -48,6 +48,8 @@ V0.09: on the Color page, Selected clips means the highlighted clips only,
        the current clip is left out.
 V0.10: the window grows to show every clip in the preview, up to
        PREVIEW_MAX_H. Current reel reports missing clip numbers.
+V0.11: the window opens WINDOW_START_H tall, since assigning Geometry
+       does not resize it on 21.1. Growth past that tries win.Resize.
 
 Things this build deliberately does not do:
   It starts rendering only when the Start tick is on, and never when a
@@ -67,7 +69,7 @@ import tempfile
 
 # ---------------------------------------------------------------- settings
 
-VERSION = "0.10"
+VERSION = "0.11"
 
 PRESET_PREFIX = ""        # optional extra filter, e.g. "SL_". Empty = off.
 
@@ -154,6 +156,9 @@ CHROME_H = 176           # title, summary, bottom strip, margins
 PREVIEW_H = 130          # smallest preview
 PREVIEW_LINE_H = 17      # one clip name in the preview
 PREVIEW_MAX_H = 900
+WINDOW_START_H = 1000
+# Assigning win.Geometry does not resize an open window on 21.1, so the
+# window opens tall enough for a long preview and never asks for less.
 # shortcut: there is no screen size in UIManager, so the preview stops
 # growing at PREVIEW_MAX_H and scrolls past that. Raise it on a tall screen.
 
@@ -1088,7 +1093,7 @@ def run_gui(resolve_app, project, timeline):
     win = disp.AddWindow({
         "ID": "RenderItWin",
         "WindowTitle": "Render It " + VERSION,
-        "Geometry": [300, 200, WINDOW_W, CHROME_H + 6 * ROW_H],
+        "Geometry": [300, 80, WINDOW_W, WINDOW_START_H],
         "Events": {"KeyPress": True},
     }, [ui.VGroup({"Spacing": 6, "Weight": 1}, body)])
 
@@ -1217,10 +1222,16 @@ def run_gui(resolve_app, project, timeline):
         rows = state["rows"] + 6 + (1 if extra_row_on() else 0)
         preview_h = min(PREVIEW_MAX_H, max(
             PREVIEW_H, state.get("preview_lines", 0) * PREVIEW_LINE_H + 12))
-        height = CHROME_H + rows * ROW_H + (preview_h if preview_on() else 0)
+        height = max(WINDOW_START_H, CHROME_H + rows * ROW_H +
+                     (preview_h if preview_on() else 0))
         try:
             geo = win.Geometry
-            win.Geometry = [geo[0], geo[1], geo[2], height]
+            if height != geo[3]:
+                # Resize is unproven on 21.1, Geometry is known not to work
+                try:
+                    win.Resize([geo[2], height])
+                except Exception:
+                    win.Geometry = [geo[0], geo[1], geo[2], height]
         except Exception:
             pass
         try:

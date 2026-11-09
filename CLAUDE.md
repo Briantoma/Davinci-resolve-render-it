@@ -192,9 +192,11 @@ Taken with Thomas on 2026-11-09, for V0.06:
   reel naming preset is chosen. Proxy copies sharing a number count once.
   Numbers before the first or after the last clip present cannot be
   seen, only holes in between.
-- The preview grows the window to show every clip, 17 px a line, up to
-  `PREVIEW_MAX_H` (900), then scrolls. UIManager gives no screen size, so
-  the cap is a constant.
+- The window opens `WINDOW_START_H` (1000) tall and never asks for less
+  (V0.11). Thomas saw on 21.1 that assigning `win.Geometry` does not
+  resize an open window, so growing it with the preview did nothing.
+  Past 1000 it tries `win.Resize`, unproven; if that fails the preview
+  scrolls. The preview wants 17 px a line, capped at `PREVIEW_MAX_H`.
 - Known side effect, accepted: after a run, the Deliver page keeps the
   last preset loaded, our in/out, `SelectAllFrames` off and our custom
   name. The API cannot read every setting back, so restoring them would
