@@ -81,9 +81,16 @@ V0.05 functions and the 00_SrcePxy preset:
   "audio": {...}}` in absolute frames, and `SetMarkInOut` takes absolute
   frames.
 - `StartRendering(job_ids, False)` works, `DeleteRenderJob` works.
-- Resolve switches to Deliver as soon as a job is queued, not only when a
-  render starts, and stays there after rendering. The window's page
-  restore at the end of `queue()` is what brings it back.
+- `LoadRenderPreset` and `SetCurrentRenderMode` switch Resolve to
+  Deliver, and it stays there after rendering. The window's page restore
+  at the end of `queue()` is what brings it back.
+- Render mode does not reliably come from the preset. Loading "Edit"
+  always gave single clip, but "00_SrcePxy" and "DNX" kept whatever mode
+  Deliver was already in. This undercuts `FOLLOW_PRESET_RENDER_MODE`,
+  see Open items.
+- `GetCurrentTimecode` returns the playhead as timeline timecode, which
+  converts to the same absolute frames as `GetStart()` (V0.06 relies on
+  this to find the reel under the playhead). Drop frame is untested.
 - In Individual clips mode Resolve widens MarkIn/MarkOut to whole clips:
   an in/out of 91000 to 91049 was stored as 90000 to 92333, the clip it
   sits in. V0.05 reports this as a mismatch.
@@ -158,6 +165,10 @@ Taken with Thomas on 2026-11-09, for V0.06:
 - Current reel looks down the tracks for the first item under the
   playhead whose name matches the reel pattern, so a title or adjustment
   clip on V2 does not block it. Refuses only when nothing matches.
+- With a preset in Individual clips mode, Resolve widens the range to
+  whole clips. The read back accepts that range and the report says
+  "widened to whole clips by Individual clips" in plain text. Anything
+  else that differs is still a mismatch.
 - Known side effect, accepted: after a run, the Deliver page keeps the
   last preset loaded, our in/out, `SelectAllFrames` off and our custom
   name. The API cannot read every setting back, so restoring them would
@@ -176,9 +187,12 @@ API mistakes. Anything in "Verify first" is outside what it can see.
 
 ## Open items
 
-- Order agreed 2026-11-09: Thomas runs the Resolve checklist on V0.05
-  with Start unticked (verify items 1, 2 and 6), then V0.06 is built with
-  the decisions above, then the same checklist runs again on V0.06.
+- V0.06 job code is checked against Resolve 21.1.2 through external
+  scripting. Still to click through by hand: the window itself, selected
+  clips scope, the symlinked install, and the page restore from inside
+  the window.
+- Render mode: decide whether the window forces it, since presets do not
+  reliably carry it (see Verify first).
 - Thomas may want the individual clips tick after all.
 - `Custom` is not in the factory list he pasted. If a preset by that name
   shows in the dropdown, add it.

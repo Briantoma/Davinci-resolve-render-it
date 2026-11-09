@@ -4,8 +4,8 @@ test_render_it.py
 
 Offline tests for Render_It. No Resolve, no Studio licence, no GUI.
 
-    python3 test_render_it.py                  # newest Render_It_V*.py
-    python3 test_render_it.py Render_It_V0.05.py
+    python3 test_render_it.py                  # Render_It.py beside it
+    python3 test_render_it.py other_copy.py
 
 It fakes two things:
 
@@ -25,7 +25,6 @@ whether ComboBox.Clear exists on your build, whether assigning win.Geometry
 resizes anything, or whether a job renders. Those need the real thing.
 """
 
-import glob
 import importlib.util
 import os
 import sys
@@ -138,6 +137,7 @@ class Project(object):
         self.jobs = []
         self.started = None
         self.last = {}
+        self.deleted = []
 
     def GetRenderPresetList(self):
         return list(self.presets)
@@ -169,6 +169,11 @@ class Project(object):
     def GetRenderJobList(self):
         return list(self.jobs)
 
+    def DeleteRenderJob(self, job_id):
+        self.deleted.append(job_id)
+        self.jobs = [j for j in self.jobs if j["JobId"] != job_id]
+        return True
+
     def StartRendering(self, job_ids, _interactive=None):
         self.started = list(job_ids)
         return True
@@ -192,19 +197,20 @@ class Item(object):
 
 
 class Timeline(object):
-    """Three A001 clips with a gap, one B001, one unmatched, one on V2."""
+    """Three A001 clips with gaps, one on V2, then a slate and a B001."""
 
     def __init__(self):
         self.v1 = [
             Item("A001C003_230412", 86400, 86500, "1"),
-            Item("B001C001_230412", 86500, 86600, "2"),
             Item("A001C005_230412", 86600, 86800, "3"),
             Item("A001C007_230412", 86900, 87000, "4"),
             Item("slate.mov", 87000, 87050, "5"),
+            Item("B001C001_230412", 87050, 87150, "2"),
         ]
-        self.v2 = [Item("A001C009_230412", 86950, 87010, "6")]
+        self.v2 = [Item("A001C009_230412", 86950, 86990, "6")]
         self.selection = []
         self.playhead = self.v1[0]
+        self.tc = None
         self.marks = {"video": {"in": 100, "out": 339}}
 
     def GetName(self):
@@ -228,6 +234,9 @@ class Timeline(object):
 
     def GetCurrentVideoItem(self):
         return self.playhead
+
+    def GetCurrentTimecode(self):
+        return self.tc
 
     def GetMarkInOut(self):
         return self.marks
@@ -308,7 +317,7 @@ def test_jobs(m):
     check("reel per clip", len(jobs) == 4)
     check("per clip has no reel", all(j["reel"] is None for j in jobs))
 
-    timeline.selection = [timeline.v1[2], timeline.v1[0]]
+    timeline.selection = [timeline.v1[1], timeline.v1[0]]
     jobs, _ = m.build_jobs(timeline, "selected", False)
     check("selection sorted", jobs[0]["in"] == 86400 and
           jobs[0]["out"] == 86799)
@@ -318,13 +327,58 @@ def test_jobs(m):
     check("inout shifted to absolute", jobs[0]["in"] == 86500,
           str(jobs[0]["in"]))
 
-    timeline.playhead = timeline.v1[4]
+    timeline.playhead = timeline.v1[3]
     try:
         m.build_jobs(timeline, "reel", False,
                      ("cam_letter", m.DEFAULT_CUSTOM_REGEX, 4))
         check("unmatched playhead refused", False)
     except RuntimeError as err:
         check("unmatched playhead refused", "slate.mov" in str(err))
+
+    # A B camera clip dropped between A001 clips on V1
+    timeline = Timeline()
+    timeline.v1.insert(1, Item("B001C002_230412", 86500, 86600, "7"))
+    cfg = ("cam_letter", m.DEFAULT_CUSTOM_REGEX, 4)
+    try:
+        m.build_jobs(timeline, "reel", False, cfg)
+        check("stranger in reel refused", False)
+    except RuntimeError as err:
+        check("stranger in reel refused",
+              "B001C002_230412" in str(err) and "reel A001" in str(err),
+              str(err))
+    jobs, _ = m.build_jobs(timeline, "reel", True, cfg)
+    check("stranger fine per clip", len(jobs) == 4)
+    timeline.selection = [timeline.v1[0], timeline.v1[2]]
+    try:
+        m.build_jobs(timeline, "selected", False)
+        check("stranger in selection refused", False)
+    except RuntimeError as err:
+        check("stranger in selection refused", "not selected" in str(err),
+              str(err))
+    timeline.selection = [timeline.v1[0], timeline.v1[1]]
+    jobs, _ = m.build_jobs(timeline, "selected", False)
+    check("adjacent selection fine", jobs[0]["out"] == 86599)
+
+    # A title on V2 over everything is not a stranger to a V1 reel
+    timeline = Timeline()
+    timeline.v2 = [Item("Title", 86400, 87000, "8")]
+    jobs, _ = m.build_jobs(timeline, "reel", False, cfg)
+    check("other track ignored", jobs[0]["out"] == 86999)
+
+    # Adjustment clip on V2 is the current item, the reel is under it on V1
+    timeline.v2 = [Item("Adjustment Clip", 86400, 87000, "9")]
+    timeline.playhead = timeline.v2[0]
+    timeline.tc = "00:57:46:00"          # frame 86650 at 25, in A001C005
+    jobs, _ = m.build_jobs(timeline, "reel", False, cfg)
+    check("reel found under V2", jobs[0]["reel"] == "A001")
+    timeline.tc = "00:58:02:00"          # frame 87050, B001C001
+    jobs, _ = m.build_jobs(timeline, "reel", False, cfg)
+    check("next track down wins", jobs[0]["reel"] == "B001",
+          str(jobs[0]["reel"]))
+
+    check("tc to frames", m.tc_to_frames("01:00:00:00", 25) == 90000)
+    check("drop frame tc", m.tc_to_frames("01:00:00;00", 29.97) == 107892,
+          str(m.tc_to_frames("01:00:00;00", 29.97)))
 
 
 def test_presets(m):
@@ -356,6 +410,22 @@ def test_queue(m):
     m.queue_jobs(project, Timeline(), ["SL Dailies ProRes"], "/tmp", jobs)
     check("single preset not suffixed",
           project.jobs[0]["CustomName"] == "A001")
+
+    class Widening(Project):
+        def AddRenderJob(self):
+            job_id = Project.AddRenderJob(self)
+            self.jobs[-1].update(MarkIn=86600, MarkOut=86799)
+            return job_id
+    inside = [{"name": "x", "in": 86650, "out": 86699, "clips": [],
+               "reel": None}]
+    _, lines = m.queue_jobs(Widening(mode=0), Timeline(),
+                            ["SL Dailies ProRes"], "/tmp", inside)
+    check("individual widening accepted",
+          "widened" in lines[1] and "MISMATCH" not in lines[1], lines[1])
+    _, lines = m.queue_jobs(Widening(mode=1), Timeline(),
+                            ["SL Dailies ProRes"], "/tmp", inside)
+    check("single clip widening is a mismatch", "MISMATCH" in lines[1],
+          lines[1])
 
     class Dead(Project):
         def AddRenderJob(self):
@@ -448,22 +518,52 @@ def test_window(m):
           CUSTOM[0] in seen["report"], seen["report"])
 
 
+class Shifted(Project):
+    """Stores every job one frame late, like a wrong frame base would."""
+
+    def AddRenderJob(self):
+        job_id = Project.AddRenderJob(self)
+        self.jobs[-1]["MarkIn"] += 1
+        return job_id
+
+
+def test_bad_frames_block_start(m):
+    seen = {}
+
+    def body(win):
+        itm = win.items
+        itm["TargetDir"].Text = "/tmp"
+        itm["StartRender"].Checked = True
+        win.On.QueueButton.Clicked(None)
+        seen["status"] = itm["Status"].Text
+        seen["red"] = bool(itm["Status"].StyleSheet)
+
+    project = Shifted()
+    project.jobs.append({"JobId": "theirs", "MarkIn": 1, "MarkOut": 2})
+    win, project, _t, app = drive(m, body, project=project)
+    check("bad frames: no start", project.started is None)
+    check("bad frames: own job removed", project.deleted == ["job2"],
+          str(project.deleted))
+    check("bad frames: other jobs kept",
+          [j["JobId"] for j in project.jobs] == ["theirs"])
+    check("bad frames: red status",
+          seen["red"] and "nothing started" in seen["status"],
+          seen["status"])
+    check("bad frames: page restored", app.page == "color", app.page)
+
+
 def main():
     if len(sys.argv) > 1:
         path = sys.argv[1]
     else:
-        here = os.path.dirname(os.path.abspath(__file__))
-        found = sorted(glob.glob(os.path.join(here, "Render_It_V*.py")))
-        if not found:
-            print("no Render_It_V*.py next to this file")
-            return 2
-        path = found[-1]
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "Render_It.py")
 
     module = load(path)
     print("testing %s (reports v%s)\n" % (os.path.basename(path),
                                           module.VERSION))
     for test in (test_reel_detection, test_jobs, test_presets,
-                 test_queue, test_window):
+                 test_queue, test_window, test_bad_frames_block_start):
         test(module)
 
     failed = 0

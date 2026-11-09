@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Render_It_V0.05.py
+Render_It.py
 
 Adds the current timeline, the in/out range, or the selected timeline clips
 to the render queue using one of your saved render presets, without leaving
@@ -13,7 +13,8 @@ scripting access to Studio only.
 Install to:
   ~/Library/Application Support/Blackmagic Design/DaVinci Resolve/
       Fusion/Scripts/Utility/
-then run from Workspace > Scripts > Render_It_V0.01.
+then run from Workspace > Scripts > Render_It.
+The filename stays fixed, the version is in VERSION and the window title.
 Utility puts it in the menu on every page, Color included.
 
 V0.01: first build. Explicit scope, one job per clip or one job for the
@@ -31,18 +32,21 @@ V0.04: the factory preset list is the real one off a 21.1 install, and
 V0.05: render mode comes from the preset instead of being forced to single
        clip. Per job summary with clip counts and reel names, preview lists
        the clip names, job mode is a tick, layout moved around.
+V0.06: fixed filename, version in the window title. Frames are checked
+       before a render starts, and a bad run removes its own jobs. One
+       job ranges refuse clips that are not part of the reel or the
+       selection. The reel is found under the playhead on any track.
+       Individual clips presets widen the range to whole clips, which is
+       reported instead of being called a mismatch.
 
 Things this build deliberately does not do:
-  It queues, it never calls StartRendering.
-  It never deletes or reorders existing jobs.
+  It starts rendering only when the Start tick is on, and never when a
+  queued job read back wrong.
+  It never deletes or reorders jobs it did not add in this run.
 
-Uncertainties flagged in code, all testable in one pass:
-  MARK_FRAMES_ABSOLUTE   whether SetRenderSettings wants absolute timeline
-                         frames or frames relative to the timeline start.
-  TOUCH_DELIVER_PAGE     whether render settings apply when Deliver has not
-                         been opened this session.
-  Both are verified by the read back after every AddRenderJob, which prints
-  what Resolve actually stored.
+Checked on Resolve Studio 21.1.2: SetRenderSettings takes absolute
+timeline frames and Deliver does not need opening first. The read back
+after every AddRenderJob stays, since it is what catches a future change.
 """
 
 import json
@@ -51,7 +55,7 @@ import re
 
 # ---------------------------------------------------------------- settings
 
-VERSION = "0.05"
+VERSION = "0.06"
 
 PRESET_PREFIX = ""        # optional extra filter, e.g. "SL_". Empty = off.
 
@@ -94,13 +98,12 @@ FOLLOW_PRESET_RENDER_MODE = True
 MARK_FRAMES_ABSOLUTE = True
 # True  = MarkIn/MarkOut are absolute timeline frames (86400 at 01:00:00:00).
 # False = frames counted from the timeline start.
-# The read back after each job prints what Resolve stored. If the numbers
-# come back wrong, flip this.
+# Checked on 21.1.2: absolute is right. The read back after each job still
+# compares what Resolve stored, in case a later build changes it.
 
 TOUCH_DELIVER_PAGE = False
 # True = open Deliver, queue, then return to the page you were on. Costs a
-# visible page flash. Only needed if jobs come back with wrong settings on
-# a session where Deliver was never opened.
+# visible page flash. Not needed on 21.1.2, settings applied without it.
 
 CLOSE_ON_SUCCESS = True
 
@@ -365,6 +368,98 @@ def all_video_items(timeline):
     return sorted(items, key=start_of)
 
 
+def tc_to_frames(tc, fps):
+    """
+    Absolute frame of a timeline timecode. Drop frame (';') follows the
+    SMPTE count, two frames per minute at 30, four at 60, except every
+    tenth minute.
+    """
+    base = int(round(fps))
+    hours, minutes, seconds, frames = [
+        int(x) for x in re.split(r"[:;.]", tc.strip())]
+    total = ((hours * 60 + minutes) * 60 + seconds) * base + frames
+    if ";" in tc:
+        all_minutes = hours * 60 + minutes
+        total -= (base // 15) * (all_minutes - all_minutes // 10)
+    return total
+
+
+def items_under_playhead(timeline):
+    """Video items under the playhead, top track first. Empty if unknown."""
+    tc = call_any(timeline, ["GetCurrentTimecode"])
+    fps = timeline_fps(timeline, None)
+    if not tc or not fps:
+        return []
+    try:
+        frame = tc_to_frames(tc, fps)
+    except Exception:
+        return []
+    hits = []
+    count = call_any(timeline, ["GetTrackCount"], "video") or 0
+    for index in range(int(count), 0, -1):
+        for item in as_list(call_any(
+                timeline, ["GetItemListInTrack", "GetItemsInTrack"],
+                "video", index)):
+            try:
+                if int(item.GetStart()) <= frame < int(item.GetEnd()):
+                    hits.append(item)
+            except Exception:
+                continue
+    return hits
+
+
+def item_key(item):
+    return call_any(item, ["GetUniqueId"]) or "%s@%s" % (
+        call_any(item, ["GetName"]), call_any(item, ["GetStart"]))
+
+
+def strangers_in_range(timeline, items, mark_in, mark_out):
+    """
+    Names of clips inside mark_in..mark_out that are not in items, looking
+    only at the tracks items sit on. A title on another track spanning the
+    whole reel is not a stranger, a B camera clip between two A clips is.
+    """
+    ours = set(item_key(item) for item in items)
+    names = []
+    count = call_any(timeline, ["GetTrackCount"], "video") or 0
+    for index in range(1, int(count) + 1):
+        track = as_list(call_any(
+            timeline, ["GetItemListInTrack", "GetItemsInTrack"],
+            "video", index))
+        keys = [item_key(item) for item in track]
+        if not ours.intersection(keys):
+            continue
+        for item, key in zip(track, keys):
+            if key in ours:
+                continue
+            try:
+                start, end = clip_extent(item)
+            except Exception:
+                continue
+            if end >= mark_in and start <= mark_out:
+                names.append(call_any(item, ["GetName"]) or "clip")
+    return names
+
+
+def widen_to_clips(timeline, mark_in, mark_out):
+    """
+    The range an Individual clips preset really renders. Resolve 21.1.2
+    stores MarkIn/MarkOut widened to the whole clips the range touches.
+    """
+    extents = []
+    for item in all_video_items(timeline):
+        try:
+            start, end = clip_extent(item)
+        except Exception:
+            continue
+        if end >= mark_in and start <= mark_out:
+            extents.append((start, end))
+    if not extents:
+        return mark_in, mark_out
+    return (min(mark_in, min(e[0] for e in extents)),
+            max(mark_out, max(e[1] for e in extents)))
+
+
 def reel_scope(timeline, reel_cfg):
     """
     (reel name, items on that reel, total video items).
@@ -375,18 +470,29 @@ def reel_scope(timeline, reel_cfg):
     """
     preset, custom_regex, chars = reel_cfg
     current = call_any(timeline, ["GetCurrentVideoItem"])
-    if current is None:
+    # A title or adjustment clip on V2 can be the current item, so every
+    # track under the playhead is a candidate, top track first.
+    candidates = ([current] if current is not None else []) + \
+        items_under_playhead(timeline)
+    if not candidates:
         picked = selected_clips(timeline)
-        current = picked[0] if picked else None
-    if current is None:
+        candidates = picked[:1]
+    if not candidates:
         raise RuntimeError(
             "no clip under the playhead and nothing selected")
 
-    name = call_any(current, ["GetName"]) or ""
-    key = reel_key(name, preset, custom_regex, chars)
+    key = None
+    names = []
+    for item in candidates:
+        name = call_any(item, ["GetName"]) or ""
+        key = reel_key(name, preset, custom_regex, chars)
+        if key:
+            break
+        if name not in names:
+            names.append(name)
     if not key:
         raise RuntimeError(
-            "'%s' does not match the reel pattern" % name)
+            "'%s' does not match the reel pattern" % "', '".join(names))
 
     items = all_video_items(timeline)
     matched = [it for it in items
@@ -547,6 +653,16 @@ def build_jobs(timeline, scope, per_clip, reel_cfg=None):
 
     mark_in = min(pair[0] for pair in extents)
     mark_out = max(pair[1] for pair in extents)
+    strangers = strangers_in_range(timeline, items, mark_in, mark_out)
+    if strangers:
+        raise RuntimeError(
+            "%s %s inside this range but %s, so one job would render %s. "
+            "Tick One job per clip, or move %s out"
+            % (", ".join(strangers),
+               "sits" if len(strangers) == 1 else "sit",
+               ("not on reel %s" % reel) if reel else "not selected",
+               "it" if len(strangers) == 1 else "them",
+               "it" if len(strangers) == 1 else "them"))
     covered = 0
     reach = mark_in - 1
     for start, end in extents:
@@ -625,14 +741,22 @@ def queue_jobs(project, timeline, presets, target_dir, jobs):
                     "AddRenderJob failed for '%s', %d jobs queued before it"
                     % (out_name, len(queued)))
             queued.append(job_id)
+            wanted = [(send_in, send_out)]
+            if mode == 0:
+                wanted.append(render_marks(
+                    *widen_to_clips(timeline, job["in"], job["out"]),
+                    start=start))
             lines.append("  " + read_back(project, job_id, out_name,
-                                          send_in, send_out))
+                                          wanted))
 
     return queued, lines
 
 
-def read_back(project, job_id, name, want_in, want_out):
-    """What Resolve actually stored, not what we asked for."""
+def read_back(project, job_id, name, wanted):
+    """
+    What Resolve actually stored, not what we asked for. wanted is the
+    (in, out) sent, then any range Resolve may legitimately store instead.
+    """
     jobs = as_list(call_any(project, ["GetRenderJobList"]))
     found = None
     for job in jobs:
@@ -640,12 +764,18 @@ def read_back(project, job_id, name, want_in, want_out):
             found = job
             break
     if not found:
-        return "%s queued, could not read it back" % name
+        return "%s queued, could not read it back  UNREADABLE" % name
 
     got_in = found.get("MarkIn")
     got_out = found.get("MarkOut")
     target = found.get("TargetDir") or "?"
-    flag = "" if (got_in == want_in and got_out == want_out) else "  MISMATCH"
+    got = (got_in, got_out)
+    if got == tuple(wanted[0]):
+        flag = ""
+    elif got in [tuple(pair) for pair in wanted[1:]]:
+        flag = "  widened to whole clips by Individual clips"
+    else:
+        flag = "  MISMATCH"
     return "%s  %s to %s  ->  %s%s" % (
         name, got_in, got_out, target, flag)
 
@@ -830,7 +960,7 @@ def run_gui(resolve_app, project, timeline):
 
     win = disp.AddWindow({
         "ID": "RenderItWin",
-        "WindowTitle": "Render It",
+        "WindowTitle": "Render It " + VERSION,
         "Geometry": [300, 200, WINDOW_W, CHROME_H + 6 * ROW_H],
         "Events": {"KeyPress": True},
     }, [ui.VGroup({"Spacing": 6, "Weight": 1}, body)])
@@ -1125,24 +1255,38 @@ def run_gui(resolve_app, project, timeline):
             set_status("dry run, nothing queued")
             return
 
+        # Checked before starting: a wrong range must never reach disk.
+        bad = [line.strip() for line in lines
+               if "MISMATCH" in line or "UNREADABLE" in line]
+        if bad:
+            kept = [job_id for job_id in queued
+                    if not call_any(project, ["DeleteRenderJob"], job_id)]
+            if page:
+                call_any(resolve_app, ["OpenPage"], page)
+            message = ("frames came back wrong, nothing started, removed "
+                       "the %d job%s this run added"
+                       % (len(queued) - len(kept),
+                          "" if len(queued) - len(kept) == 1 else "s"))
+            if kept:
+                message += ", could not remove %s" % ", ".join(kept)
+            set_status(message, error=True)
+            return
+
         started = None
         if itm["StartRender"].Checked and queued:
             started = start_rendering(project, queued)
 
-        # Resolve moves to Deliver when a render starts, so this goes last.
+        # Resolve 21.1.2 moves to Deliver as soon as a job is queued and
+        # stays there through the render, so this goes last.
         if page:
             call_any(resolve_app, ["OpenPage"], page)
 
-        mismatch = any("MISMATCH" in line for line in lines)
         message = "queued %d job%s" % (len(queued),
                                        "" if len(queued) == 1 else "s")
         if itm["StartRender"].Checked:
             message += ", rendering" if started else \
                 ", render did not start"
-        if mismatch:
-            message += ", frames came back wrong"
-        failed = bool(mismatch) or (itm["StartRender"].Checked
-                                    and not started)
+        failed = itm["StartRender"].Checked and not started
         set_status(message, error=failed)
         if CLOSE_ON_SUCCESS and not failed:
             close()
