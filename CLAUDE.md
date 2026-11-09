@@ -25,7 +25,8 @@ is proven against the real API. Read "Verify first".
   symlinked script, copy the file instead.
 - Settings persist to `render_it_settings.json` in the Utility folder.
   It stays there across versions, never in the repo.
-- Git is local only, no remote. `append_it.py` (same Utility folder) is
+- Git remote: public repo github.com/Briantoma/Davinci-resolve-render-it
+  (since 2026-11-09). README.md is the user facing doc, keep it in step. `append_it.py` (same Utility folder) is
   a separate tool and out of scope here.
 
 ## Conventions, follow these
