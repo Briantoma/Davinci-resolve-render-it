@@ -67,6 +67,30 @@ both ends. `GetEnd()` is exclusive in Resolve, `clip_extent` subtracts one.
 Nothing here is a bug yet. They are things the documentation does not
 answer and the stubs cannot prove.
 
+Proven on Resolve Studio 21.1.2, 2026-11-09, through external scripting
+on a 25 fps timeline starting at 01:00:00:00 (frame 90000), using the
+V0.05 functions and the 00_SrcePxy preset:
+
+- Item 1 settled: absolute frames are right, keep `MARK_FRAMES_ABSOLUTE`
+  True. A reel job sent 90000 to 107739 was stored exactly so, and a
+  single clip render of 91000 to 91049 came out 2.000 s, 50 frames, so
+  the inclusive out and the `GetEnd() - 1` in `clip_extent` are right.
+- Item 2 settled: settings applied without opening Deliver first, keep
+  `TOUCH_DELIVER_PAGE` False.
+- Item 3 settled: `GetMarkInOut` returns `{"video": {"in", "out"},
+  "audio": {...}}` in absolute frames, and `SetMarkInOut` takes absolute
+  frames.
+- `StartRendering(job_ids, False)` works, `DeleteRenderJob` works.
+- Resolve switches to Deliver as soon as a job is queued, not only when a
+  render starts, and stays there after rendering. The window's page
+  restore at the end of `queue()` is what brings it back.
+- In Individual clips mode Resolve widens MarkIn/MarkOut to whole clips:
+  an in/out of 91000 to 91049 was stored as 90000 to 92333, the clip it
+  sits in. V0.05 reports this as a mismatch.
+- Not covered: the window itself (UIManager items in 5), selected clips
+  scope (the API cannot select clips), and the page restore run from
+  inside the window (6).
+
 1. `MARK_FRAMES_ABSOLUTE`. The script sends absolute timeline frames
    (86400 at 01:00:00:00) to `SetRenderSettings`. Every job is read back
    out of `GetRenderJobList` and compared, and the status line says
