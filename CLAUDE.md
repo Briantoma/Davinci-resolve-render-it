@@ -1,6 +1,4 @@
-# Render It, handover
-
-Rename this to `CLAUDE.md` if you want Claude Code to load it automatically.
+# Render It
 
 ## What it is
 
@@ -9,8 +7,9 @@ the in/out range to the render queue using saved render presets, without
 leaving the Color page. The Quick Export window, with our presets and our
 reel logic.
 
-Current version: `Render_It_V0.05.py`. Never shipped to Resolve yet, so
-nothing below has run against the real API. Read "Verify first".
+Current version: `Render_It_V0.05.py`, becoming `Render_It.py` from V0.06.
+Launched once in Resolve (Sep 19) but nothing was checked, so nothing below
+is proven against the real API. Read "Verify first".
 
 ## Environment
 
@@ -21,13 +20,20 @@ nothing below has run against the real API. Read "Verify first".
 - Install path:
   `~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility/`
   Utility, not Color, so it appears in Workspace > Scripts on every page.
-- Settings persist to `render_it_settings.json` beside the script.
+  From V0.06 that folder holds a symlink to `Render_It.py` in this repo,
+  so every commit is live in Resolve. If Resolve refuses to run a
+  symlinked script, copy the file instead.
+- Settings persist to `render_it_settings.json` in the Utility folder.
+  It stays there across versions, never in the repo.
+- Git is local only, no remote. `append_it.py` (same Utility folder) is
+  a separate tool and out of scope here.
 
 ## Conventions, follow these
 
-- Version number lives in the filename and in `VERSION`, and both go up on
-  every change. Changelog lines at the top of the docstring, one per
-  version, newest last.
+- The filename is fixed, `Render_It.py`, from V0.06 on. The version lives
+  in `VERSION` and in the window title, and goes up on every change.
+  Changelog lines at the top of the docstring, one per version, newest
+  last. One commit per version.
 - Ask Thomas what a new file should be called before creating it.
 - No bold and no em dashes in anything he will read.
 - Comments explain why, not what. If a line exists because of an API quirk,
@@ -114,20 +120,41 @@ answer and the stubs cannot prove.
   level, because Resolve execs menu scripts and `__file__` is undefined.
   That crashed V0.01 on first launch.
 
+Taken with Thomas on 2026-11-09, for V0.06:
+
+- The frame check runs before `StartRendering`. A mismatch, or a job that
+  cannot be read back, means no start, red status, window stays open.
+  In that case the script deletes the jobs it added in that run, and only
+  those, and says so. Jobs it did not add are never touched.
+- One job mode (current reel, selected clips) refuses when a clip that is
+  not part of the reel or selection sits inside the range, and names it.
+  Only tracks that hold a reel or selected clip are checked, so a title
+  or adjustment clip on another track does not trigger it. One job per
+  clip mode is not affected.
+- Current reel looks down the tracks for the first item under the
+  playhead whose name matches the reel pattern, so a title or adjustment
+  clip on V2 does not block it. Refuses only when nothing matches.
+- Known side effect, accepted: after a run, the Deliver page keeps the
+  last preset loaded, our in/out, `SelectAllFrames` off and our custom
+  name. The API cannot read every setting back, so restoring them would
+  be a guess.
+
 ## Testing
 
 `python3 test_render_it.py` runs 37 checks with no Resolve, no licence and
 no GUI. It fakes UIManager (widgets, group collection, event slots) and the
 Resolve objects, drives the real `run_gui`, and asserts on what would have
-been queued. It picks the newest `Render_It_V*.py` automatically.
+been queued. It picks the newest `Render_It_V*.py` automatically, and
+loads `Render_It.py` from V0.06.
 
 Add a check for every behaviour you add. It catches wiring mistakes, not
 API mistakes. Anything in "Verify first" is outside what it can see.
 
 ## Open items
 
-- First real launch in Resolve. Confirm item 1 and 2 above before anything
-  else, since every queued job depends on them.
+- Order agreed 2026-11-09: Thomas runs the Resolve checklist on V0.05
+  with Start unticked (verify items 1, 2 and 6), then V0.06 is built with
+  the decisions above, then the same checklist runs again on V0.06.
 - Thomas may want the individual clips tick after all.
 - `Custom` is not in the factory list he pasted. If a preset by that name
   shows in the dropdown, add it.
