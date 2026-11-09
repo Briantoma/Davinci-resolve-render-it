@@ -50,6 +50,8 @@ V0.10: the window grows to show every clip in the preview, up to
        PREVIEW_MAX_H. Current reel reports missing clip numbers.
 V0.11: the window opens WINDOW_START_H tall, since assigning Geometry
        does not resize it on 21.1. Growth past that tries win.Resize.
+V0.12: only one Render It window at a time, a second launch brings the
+       open one forward. Return or Enter presses Add to queue.
 
 Things this build deliberately does not do:
   It starts rendering only when the Start tick is on, and never when a
@@ -69,7 +71,7 @@ import tempfile
 
 # ---------------------------------------------------------------- settings
 
-VERSION = "0.11"
+VERSION = "0.12"
 
 PRESET_PREFIX = ""        # optional extra filter, e.g. "SL_". Empty = off.
 
@@ -943,6 +945,19 @@ def run_gui(resolve_app, project, timeline):
             "UIManager is unavailable, which means this is not Studio")
 
     ui = fusion_app.UIManager
+    # One window at a time: a second launch brings the open one forward.
+    # Every Resolve script shares this UIManager, so the ID is visible.
+    try:
+        existing = ui.FindWindow("RenderItWin")
+    except Exception:
+        existing = None
+    if existing:
+        for method in ("Show", "Raise", "ActivateWindow"):
+            try:
+                getattr(existing, method)()
+            except Exception:
+                pass
+        return
     disp = get_dispatcher(ui)
     saved = load_settings()
     all_presets, custom_presets = preset_names(project)
@@ -1442,13 +1457,22 @@ def run_gui(resolve_app, project, timeline):
         disp.ExitLoop()
 
     def on_key(event):
-        """Escape closes. Qt sends unhandled keys up from the fields."""
+        """
+        Escape closes, Return or Enter presses Add to queue, which also
+        starts the render when that tick is on. Qt sends unhandled keys up
+        from the fields.
+        """
         try:
             key = event["Key"]
         except Exception:
             return
         if key == 0x01000000:               # Qt::Key_Escape
             close()
+        elif key in (0x01000004, 0x01000005):   # Key_Return, Key_Enter
+            # disabled while a queue is running, so a held key cannot
+            # queue the same jobs twice
+            if itm["QueueButton"].Enabled:
+                queue()
 
     win.On.RenderItWin.Close = close
     win.On.RenderItWin.KeyPress = on_key

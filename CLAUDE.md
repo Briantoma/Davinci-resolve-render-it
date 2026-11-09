@@ -197,6 +197,12 @@ Taken with Thomas on 2026-11-09, for V0.06:
   resize an open window, so growing it with the preview did nothing.
   Past 1000 it tries `win.Resize`, unproven; if that fails the preview
   scrolls. The preview wants 17 px a line, capped at `PREVIEW_MAX_H`.
+- One window at a time (V0.12): `ui.FindWindow("RenderItWin")` finds an
+  open window and a second launch brings it forward and stops. FindWindow
+  exists on 21.1.2 and returns None with no window open; finding a window
+  opened by another launch is unproven.
+- Return or Enter presses Add to queue, so it starts the render only when
+  the Start tick is on. Ignored while a queue is running.
 - Known side effect, accepted: after a run, the Deliver page keeps the
   last preset loaded, our in/out, `SelectAllFrames` off and our custom
   name. The API cannot read every setting back, so restoring them would

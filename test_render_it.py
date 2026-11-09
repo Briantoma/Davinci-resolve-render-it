@@ -55,6 +55,11 @@ class Widget(object):
 
 
 class UIManager(object):
+    open_window = None
+
+    def FindWindow(self, _ident):
+        return UIManager.open_window
+
     def __getattr__(self, _kind):
         def make(props, children=None):
             return {"props": props, "children": children or []}
@@ -669,6 +674,37 @@ def test_long_preview(m):
           str(huge["height"]))
 
 
+def test_keys_and_single_instance(m):
+    seen = {}
+
+    def body(win):
+        itm = win.items
+        itm["TargetDir"].Text = "/tmp"
+        itm["StartRender"].Checked = True
+        win.On.RenderItWin.KeyPress({"Key": 0x01000004})
+        seen["status"] = itm["Status"].Text
+
+    _win, project, _t, _app = drive(m, body)
+    check("Return queues and starts", project.started is not None and
+          "rendering" in seen["status"], seen["status"])
+
+    class Open(object):
+        raised = 0
+
+        def Raise(self):
+            Open.raised += 1
+
+    UIManager.open_window = Open()
+    try:
+        bucket = {}
+        m.get_dispatcher = lambda _ui: bucket.setdefault("made", True)
+        m.run_gui(App(), Project(), Timeline())
+        check("second launch opens nothing", "made" not in bucket)
+        check("second launch raises the open window", Open.raised == 1)
+    finally:
+        UIManager.open_window = None
+
+
 def main():
     if len(sys.argv) > 1:
         path = sys.argv[1]
@@ -681,7 +717,7 @@ def main():
                                           module.VERSION))
     for test in (test_reel_detection, test_jobs, test_presets,
                  test_queue, test_window, test_bad_frames_block_start,
-                 test_long_preview):
+                 test_long_preview, test_keys_and_single_instance):
         test(module)
 
     failed = 0
