@@ -208,6 +208,11 @@ Taken with Thomas on 2026-11-09, for V0.06:
   opened by another launch is unproven.
 - Return or Enter presses Add to queue, so it starts the render only when
   the Start tick is on. Ignored while a queue is running.
+- In/Out range with an in point and no out point renders to the end of
+  the timeline, `GetEndFrame() - 1` (V0.14, Thomas). A lone out point is
+  still refused.
+- The status label wraps (V0.14). Unwrapped, a long note such as the
+  missing clip list set the window's minimum width past the screen edge.
 - Known side effect, accepted: after a run, the Deliver page keeps the
   last preset loaded, our in/out, `SelectAllFrames` off and our custom
   name. The API cannot read every setting back, so restoring them would

@@ -229,6 +229,9 @@ class Timeline(object):
     def GetStartFrame(self):
         return 86400
 
+    def GetEndFrame(self):           # exclusive, as Resolve reports it
+        return 87150
+
     def GetSetting(self, _key):
         return "25.0"
 
@@ -380,6 +383,11 @@ def test_jobs(m):
     except RuntimeError as err:
         check("lone out point refused", "only an out point" in str(err),
               str(err))
+    timeline.marks = {"video": {"in": 86500}, "audio": {"in": 86500}}
+    jobs, _ = m.build_jobs(timeline, "inout", False)
+    check("no out point runs to the end",
+          (jobs[0]["in"], jobs[0]["out"]) == (86500, 87149),
+          str((jobs[0]["in"], jobs[0]["out"])))
 
     timeline.playhead = timeline.v1[3]
     try:
@@ -595,6 +603,7 @@ def test_window(m):
 
     win, project, _timeline, app = drive(m, body)
 
+    check("status line wraps", win.items["Status"].props.get("WordWrap"))
     check("custom presets only by default", seen["presets"] == CUSTOM,
           str(seen["presets"]))
     check("default is reel, one job",

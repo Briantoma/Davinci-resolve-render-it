@@ -47,7 +47,8 @@ time, launching it again brings the open one forward.
 - Selected clips: the clips highlighted in the timeline. On the Color page
   Resolve always counts the current clip as selected, so it is left out
   there. Move the playhead off a clip to include it.
-- In/Out range: the timeline in and out points.
+- In/Out range: the timeline in and out points. With an in point and no
+  out point, it renders to the end of the timeline.
 
 Reels are detected from the clip name, with the same five naming schemes as
 Append It, from `A001` camera letter plus reel number through to a custom

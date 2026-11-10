@@ -54,6 +54,8 @@ V0.12: only one Render It window at a time, a second launch brings the
        open one forward. Return or Enter presses Add to queue.
 V0.13: missing clip numbers count from C001, and a reel with missing
        numbers asks in a pop up before it is queued.
+V0.14: an in point with no out point renders to the end of the timeline.
+       The status line wraps, so a long note cannot widen the window.
 
 Things this build deliberately does not do:
   It starts rendering only when the Start tick is on, and never when a
@@ -73,7 +75,7 @@ import tempfile
 
 # ---------------------------------------------------------------- settings
 
-VERSION = "0.13"
+VERSION = "0.14"
 
 PRESET_PREFIX = ""        # optional extra filter, e.g. "SL_". Empty = off.
 
@@ -590,21 +592,30 @@ def inout_extent(timeline):
     # Resolve 21.1.2 returns a lone out point as {"out": n} with no "in".
     has_in = "in" in block or "In" in block
     has_out = "out" in block or "Out" in block
-    if has_in != has_out:
-        raise RuntimeError("only an %s point is set on this timeline, set "
-                           "the %s point too"
-                           % (("in", "out") if has_in else ("out", "in")))
+    if has_out and not has_in:
+        raise RuntimeError("only an out point is set on this timeline, set "
+                           "the in point too")
 
     try:
         mark_in = int(block.get("in", block.get("In")))
-        mark_out = int(block.get("out", block.get("Out")))
+        mark_out = int(block.get("out", block.get("Out"))) if has_out \
+            else None
     except Exception:
         raise RuntimeError("in/out range came back in a shape I cannot read")
 
     start = timeline_start(timeline)
     if mark_in < start:
         mark_in += start
-        mark_out += start
+        if mark_out is not None:
+            mark_out += start
+    if mark_out is None:
+        # No out point: render to the end. GetEndFrame is exclusive,
+        # 17740 on a timeline whose last clip ends at 17740.
+        try:
+            mark_out = int(timeline.GetEndFrame()) - 1
+        except Exception:
+            raise RuntimeError("no out point is set and the timeline end "
+                               "cannot be read, set the out point")
     return mark_in, mark_out
 
 
@@ -1098,7 +1109,10 @@ def run_gui(resolve_app, project, timeline):
             ui.Label({"Text": "v" + VERSION, "Weight": 0,
                       "MinimumSize": fixed(46),
                       "MaximumSize": fixed(46)}),
-            ui.Label({"ID": "Status", "Text": "", "Weight": 1}),
+            # WordWrap: a long note (missing clip numbers) otherwise sets
+            # the window's minimum width, wider than the screen.
+            ui.Label({"ID": "Status", "Text": "", "Weight": 1,
+                      "WordWrap": True}),
             ui.Button({"ID": "RefreshButton", "Text": "Refresh selection",
                        "Weight": 0,
                        "MinimumSize": fixed(140),
