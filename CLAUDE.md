@@ -237,5 +237,12 @@ API mistakes. Anything in "Verify first" is outside what it can see.
   the window.
 - `Custom` is not in the factory list he pasted. If a preset by that name
   shows in the dropdown, add it.
+- Background rendering cannot be requested through the API on 21.1.2
+  (checked 2026-11-10): SetRenderSettings refuses BackgroundRender,
+  RenderInBackground, IsBackgroundRender and Background, presets do not
+  store it, the job list has no field for it and StartRendering only takes
+  isInteractiveMode. Only a job status 'Ready for background render'
+  exists. To render in the background, leave Start unticked and start the
+  queue from Deliver.
 - No UI for creating render presets, and there should not be. That is the
   Deliver page's job.
