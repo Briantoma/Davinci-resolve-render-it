@@ -750,7 +750,14 @@ def test_keys_and_single_instance(m):
         answer_gap(win)
         seen["status"] = itm["Status"].Text
 
+        win.On.RenderItWin.KeyPress({"Key": 0x01000004})
+        win.On.QueueButton.Clicked(None)
+        seen["asked_again"] = answer_gap(win)
+
     _win, project, _t, _app = drive(m, body)
+    check("Enter twice queues once", len(project.jobs) == 1,
+          str(len(project.jobs)))
+    check("no second pop up", not seen["asked_again"])
     check("Return queues and starts", project.started is not None and
           "rendering" in seen["status"], seen["status"])
 

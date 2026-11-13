@@ -56,6 +56,8 @@ V0.13: missing clip numbers count from C001, and a reel with missing
        numbers asks in a pop up before it is queued.
 V0.14: an in point with no out point renders to the end of the timeline.
        The status line wraps, so a long note cannot widen the window.
+V0.15: a window queues once. Enter pressed again, even buffered while
+       the first run was busy, adds nothing.
 
 Things this build deliberately does not do:
   It starts rendering only when the Start tick is on, and never when a
@@ -75,7 +77,7 @@ import tempfile
 
 # ---------------------------------------------------------------- settings
 
-VERSION = "0.14"
+VERSION = "0.15"
 
 PRESET_PREFIX = ""        # optional extra filter, e.g. "SL_". Empty = off.
 
@@ -1393,6 +1395,10 @@ def run_gui(resolve_app, project, timeline):
 
     # ---- queue
     def queue(_event=None, confirmed=False):
+        # Qt buffers a second Enter while a run is busy and delivers it
+        # once the run returns, so a window that has queued jobs stays done.
+        if state.get("queued"):
+            return
         target = (itm["TargetDir"].Text or "").strip()
         if not target:
             set_status("set a destination folder first", error=True)
@@ -1433,7 +1439,8 @@ def run_gui(resolve_app, project, timeline):
             set_status(str(err), error=True)
             return
 
-        itm["QueueButton"].Enabled = True
+        state["queued"] = bool(queued)
+        itm["QueueButton"].Enabled = not state["queued"]
         itm["Summary"].PlainText = "\n".join(lines)
         remember()
 
@@ -1457,6 +1464,9 @@ def run_gui(resolve_app, project, timeline):
                           "" if len(queued) - len(kept) == 1 else "s"))
             if kept:
                 message += ", could not remove %s" % ", ".join(kept)
+            # the jobs are gone again, so a retry cannot duplicate them
+            state["queued"] = bool(kept)
+            itm["QueueButton"].Enabled = not kept
             set_status(message, error=True)
             return
 

@@ -213,6 +213,10 @@ Taken with Thomas on 2026-11-09, for V0.06:
   still refused.
 - The status label wraps (V0.14). Unwrapped, a long note such as the
   missing clip list set the window's minimum width past the screen edge.
+- A window queues once (V0.15). Qt buffers a second Enter while a run
+  is busy and delivers it after, when the button was already back on, so
+  the guard is a state flag, not the button. Only a run whose jobs were
+  removed again (frames came back wrong) allows another try.
 - Known side effect, accepted: after a run, the Deliver page keeps the
   last preset loaded, our in/out, `SelectAllFrames` off and our custom
   name. The API cannot read every setting back, so restoring them would
